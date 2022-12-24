@@ -1,34 +1,34 @@
 <?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
-    <title>Healthy cooking: latest recipes</title>
-    <link href="http://healthycooking.example.com/atom.xml" rel="self" />
-    <link href="http://healthycooking.example.com" />
-    <id>http://healthycooking.example.com/atom.xml</id>
+    <title>Filippo Ghibellini - Blog</title>
+    <link href="https://fghibellini.com/atom.xml" rel="self" />
+    <link href="https://fghibellini.com" />
+    <id>https://fghibellini.com/atom.xml</id>
     <author>
-        <name>John Doe</name>
-        <email>test@example.com</email>
+        <name>Filippo Ghibellini</name>
+        <email>f.ghibellini@gmail.com</email>
     </author>
     <updated>2022-12-20T00:00:00Z</updated>
     <entry>
     <title>Recursive SQL Queries In Practice</title>
-    <link href="http://healthycooking.example.com/posts/2022-12-20-Recursive-SQL-Queries-In-Practice/index.html" />
-    <id>http://healthycooking.example.com/posts/2022-12-20-Recursive-SQL-Queries-In-Practice/index.html</id>
+    <link href="https://fghibellini.com/posts/2022-12-20-Recursive-SQL-Queries-In-Practice/index.html" />
+    <id>https://fghibellini.com/posts/2022-12-20-Recursive-SQL-Queries-In-Practice/index.html</id>
     <published>2022-12-20T00:00:00Z</published>
     <updated>2022-12-20T00:00:00Z</updated>
     <summary type="html"><![CDATA[<No description>]]></summary>
 </entry>
 <entry>
     <title>Leveraging UUIDs to the Max</title>
-    <link href="http://healthycooking.example.com/posts/2022-12-17-Leveraging-UUIDs-to-the-Max/index.html" />
-    <id>http://healthycooking.example.com/posts/2022-12-17-Leveraging-UUIDs-to-the-Max/index.html</id>
+    <link href="https://fghibellini.com/posts/2022-12-17-Leveraging-UUIDs-to-the-Max/index.html" />
+    <id>https://fghibellini.com/posts/2022-12-17-Leveraging-UUIDs-to-the-Max/index.html</id>
     <published>2022-12-17T00:00:00Z</published>
     <updated>2022-12-17T00:00:00Z</updated>
     <summary type="html"><![CDATA[<No description>]]></summary>
 </entry>
 <entry>
     <title>Max area under histogram</title>
-    <link href="http://healthycooking.example.com/posts/2015-06-26-Max-area-under-histogram/index.html" />
-    <id>http://healthycooking.example.com/posts/2015-06-26-Max-area-under-histogram/index.html</id>
+    <link href="https://fghibellini.com/posts/2015-06-26-Max-area-under-histogram/index.html" />
+    <id>https://fghibellini.com/posts/2015-06-26-Max-area-under-histogram/index.html</id>
     <published>2015-06-26T00:00:00Z</published>
     <updated>2015-06-26T00:00:00Z</updated>
     <summary type="html"><![CDATA[<No description>]]></summary>
