@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <!-- SHARED CONTENTS OF HEAD TAG -->
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Personal blog">
+<meta name="author" content="Filippo Ghibellini">
+<title>Filippo Ghibellini - Recursive SQL Queries In Practice</title>
+<link href="https://fonts.googleapis.com/css?family=Crimson+Text:400,700" rel="stylesheet">
+<link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/normalize/7.0.0/normalize.min.css" />
+<link rel="stylesheet" type="text/css" href="../../css/default.css" />
+
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.5/require.min.js"></script>
+    </head>
+    <body>
+        <div class="post-nav">
+            <a href="../../">&lt; Back home</a>
+        </div>
+
+        <div class="content">
+
+            <div class="post-header-image">
+            </div>
+
+            <h1 class="post-title">Recursive SQL Queries In Practice</h1>
+            <span class="posted-on">Posted on December 20, 2022</span>
+
+            <blockquote>
+<h2 id="trigger-warning">⚠️ Trigger Warning ⚠️</h2>
+<p>The article contains fairly convoluted SQL queries. If you experienced SQL-related trauma you might want to skip this one.</p>
+</blockquote>
+<h2 id="ctx">Ctx</h2>
+<p>In a business context you will regularly have scenarios in which you need to track relationships between entities.</p>
+<p>In our specific case we had a system whose only purpose was tracking relationships between entities. This service would regularly receive support requests where users were surprised by the data returned by this service.</p>
+<p>It was standard practice for an engineer to take the input data from the support ticket and manually inspect the database. They would try to “figure out” what was the overall state relevant for the user queries and report back to the users. This was obviously very time consuming and distracting.</p>
+<h2 id="ill-take-all-the-context-you-have">I’ll take all the context you have!</h2>
+<p>On the first opportunity of a lower-load week I decided to test that postgres feature that “you’ll for sure never use in a real-world application”.</p>
+<p><strong>💥 RECURSIVE SQL QUERIES 💥</strong> (<em><a href="https://www.postgresql.org/docs/current/queries-with.html#QUERIES-WITH-RECURSIVE">link to documentation</a></em>)</p>
+<p>The basic idea was to let the user specify “starting points” and then to recursively explore the relationship graph for any data that is in any way reachable (see: <a href="https://en.wikipedia.org/wiki/Transitive_closure">transitive closure</a>).</p>
+<h3 id="execution">Execution</h3>
+<p>For illustrative purposes we’ll use the following domain:</p>
+<h4 id="table-1-patient_met_doctor">Table 1 <code>patient_met_doctor</code></h4>
+<table>
+<thead>
+<tr class="header">
+<th>patient</th>
+<th>doctor</th>
+<th>…other fields</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Sarah</td>
+<td>dr. John</td>
+<td>…</td>
+</tr>
+<tr class="even">
+<td>Mike</td>
+<td>dr. Dre</td>
+<td>…</td>
+</tr>
+<tr class="odd">
+<td>Susan</td>
+<td>dr. Frege</td>
+<td>…</td>
+</tr>
+</tbody>
+</table>
+<h4 id="table-2-doctor_used_workstation">Table 2 <code>doctor_used_workstation</code></h4>
+<table>
+<thead>
+<tr class="header">
+<th>doctor</th>
+<th>workstation</th>
+<th>…other fields</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>dr. John</td>
+<td>station_1</td>
+<td>…</td>
+</tr>
+<tr class="even">
+<td>dr. Dre</td>
+<td>station_1</td>
+<td>…</td>
+</tr>
+<tr class="odd">
+<td>dr. Frege</td>
+<td>station_3</td>
+<td>…</td>
+</tr>
+</tbody>
+</table>
+<p>The two tables together represent the following graph:</p>
+<figure>
+<img src="./graph.png" alt="graph" /><figcaption aria-hidden="true">graph</figcaption>
+</figure>
+<p>our goal is to be able to input any one of the values <code>{"Sarah", "dr. John", "station_1", "Mike", "dr. Dre"}</code> and always get back a list of all the four edges that connect all of them together (<code>{A,B,D,E}</code>).</p>
+<h4 id="the-query">THE Query</h4>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sql"><code class="sourceCode sql"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co">-- tipe - can be either 'p2d' or 'd2w'</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="co">-- lft - left identifier</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="co">-- rgt - right identifier</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="kw">WITH</span> RECURSIVE all_edges(tipe, lft, rgt) <span class="kw">AS</span> (</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>  <span class="co">-- INITIAL TERMS</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>  (</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>    (<span class="kw">SELECT</span> <span class="st">'p2d'</span>, patient, doctor <span class="kw">FROM</span> patient_met_doctor <span class="kw">WHERE</span> (patient <span class="op">=</span> <span class="kw">ANY</span>($<span class="dv">1</span>) <span class="kw">OR</span> doctor <span class="op">=</span> <span class="kw">ANY</span>($<span class="dv">2</span>))</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>    (<span class="kw">SELECT</span> <span class="st">'d2w'</span>, doctor, workstation <span class="kw">FROM</span> doctor_used_workstation <span class="kw">WHERE</span> (doctor <span class="op">=</span> <span class="kw">ANY</span>($<span class="dv">2</span>) <span class="kw">or</span> workstation <span class="op">=</span> <span class="kw">ANY</span>($<span class="dv">3</span>))</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>  )</span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>  <span class="kw">UNION</span></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>  <span class="co">-- RECURSIVE TERMS</span></span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>  (</span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>    <span class="kw">WITH</span></span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>      edges <span class="kw">AS</span> (<span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> all_edges), <span class="co">-- https://dba.stackexchange.com/a/240309</span></span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>      edges_p2d <span class="kw">AS</span> (<span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> edges <span class="kw">WHERE</span> tipe <span class="op">=</span> <span class="st">'p2d'</span>),</span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>      edges_d2w <span class="kw">AS</span> (<span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> edges <span class="kw">WHERE</span> tipe <span class="op">=</span> <span class="st">'d2w'</span>),</span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>      active_patients(pat_id) <span class="kw">AS</span> (<span class="kw">SELECT</span> lft <span class="kw">FROM</span> edges_p2d),</span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>      active_doctors(dr_id) <span class="kw">AS</span> (<span class="kw">SELECT</span> rgt <span class="kw">FROM</span> edges_p2d <span class="kw">UNION</span> <span class="kw">SELECT</span> lft <span class="kw">FROM</span> edges_d2w),</span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>      active_workstations(ws_id) <span class="kw">AS</span> (<span class="kw">SELECT</span> rgt <span class="kw">FROM</span> edges_d2w)</span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a>    <span class="co">-- PATIENT ADJACENT EDGES</span></span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a>    (<span class="kw">SELECT</span> <span class="st">'p2d'</span>, patient, doctor <span class="kw">FROM</span> patient_met_doctor pmd <span class="kw">JOIN</span> active_patients ap <span class="kw">ON</span> pmd.patient <span class="op">=</span> ap.pat_id)</span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>    <span class="kw">UNION</span></span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a>    <span class="co">-- WORKSTATION ADJACENT EDGES</span></span>
+<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a>    <span class="kw">UNION</span></span>
+<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a>    (<span class="kw">SELECT</span> <span class="st">'d2w'</span>, doctor, workstation <span class="kw">FROM</span> doctor_used_workstation duw <span class="kw">JOIN</span> active_workstations aw <span class="kw">ON</span> duw.workstation <span class="op">=</span> aw.ws_id)</span>
+<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a>    <span class="co">-- DOCTOR LEFT-ADJACENT EDGES</span></span>
+<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a>    <span class="kw">UNION</span></span>
+<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a>    (<span class="kw">SELECT</span> <span class="st">'p2d'</span>, patient, doctor <span class="kw">FROM</span> patient_met_doctor pmd <span class="kw">JOIN</span> active_doctors ad <span class="kw">ON</span> pmd.doctor <span class="op">=</span> ad.dr_id)</span>
+<span id="cb1-29"><a href="#cb1-29" aria-hidden="true" tabindex="-1"></a>    <span class="co">-- DOCTOR RIGHT-ADJACENT EDGES</span></span>
+<span id="cb1-30"><a href="#cb1-30" aria-hidden="true" tabindex="-1"></a>    <span class="kw">UNION</span></span>
+<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a>    (<span class="kw">SELECT</span> <span class="st">'d2w'</span>, doctor, workstation <span class="kw">FROM</span> doctor_used_workstation duw <span class="kw">JOIN</span> active_doctors ad <span class="kw">ON</span> duw.doctor <span class="op">=</span> ad.dr_id)</span>
+<span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a>  )</span>
+<span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> all_edges;</span></code></pre></div>
+<p>The query accepts 3 string arrays as input. The output is an array of edges tagged with either <code>p2d</code> or <code>d2w</code>.</p>
+<details>
+<summary>
+All code + Example invocation
+</summary>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sql"><code class="sourceCode sql"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="kw">create</span> <span class="kw">table</span> patient_met_doctor</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>( patient text <span class="kw">not</span> <span class="kw">null</span>,</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>  doctor text <span class="kw">not</span> <span class="kw">null</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>);</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="kw">create</span> <span class="kw">table</span> doctor_used_workstation</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>( doctor text <span class="kw">not</span> <span class="kw">null</span>,</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a> workstation text <span class="kw">not</span> <span class="kw">null</span></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a> );</span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="kw">insert</span> <span class="kw">into</span> patient_met_doctor(patient,doctor) <span class="kw">values</span></span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a>( <span class="st">'Sarah'</span>, <span class="st">'dr. John'</span>),</span>
+<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a>( <span class="st">'Mike'</span>, <span class="st">'dr. Dre'</span>),</span>
+<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a>( <span class="st">'Susan'</span>, <span class="st">'dr. Frege'</span>);</span>
+<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a><span class="kw">insert</span> <span class="kw">into</span> doctor_used_workstation <span class="kw">values</span></span>
+<span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a>(<span class="st">'dr. John'</span>, <span class="st">'station_1'</span>),</span>
+<span id="cb2-18"><a href="#cb2-18" aria-hidden="true" tabindex="-1"></a>(<span class="st">'dr. Dre'</span>, <span class="st">'station_1'</span>),</span>
+<span id="cb2-19"><a href="#cb2-19" aria-hidden="true" tabindex="-1"></a>(<span class="st">'dr. Frege'</span>, <span class="st">'station_2'</span>);</span>
+<span id="cb2-20"><a href="#cb2-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-21"><a href="#cb2-21" aria-hidden="true" tabindex="-1"></a><span class="kw">PREPARE</span> exploreGraph(text[], text[], text[]) <span class="kw">AS</span></span>
+<span id="cb2-22"><a href="#cb2-22" aria-hidden="true" tabindex="-1"></a><span class="kw">WITH</span> RECURSIVE all_edges(tipe, lft, rgt) <span class="kw">AS</span> (</span>
+<span id="cb2-23"><a href="#cb2-23" aria-hidden="true" tabindex="-1"></a>  <span class="co">-- INITIAL TERMS</span></span>
+<span id="cb2-24"><a href="#cb2-24" aria-hidden="true" tabindex="-1"></a>  (</span>
+<span id="cb2-25"><a href="#cb2-25" aria-hidden="true" tabindex="-1"></a>    <span class="kw">SELECT</span> <span class="st">'p2d'</span>, patient, doctor <span class="kw">FROM</span> patient_met_doctor <span class="kw">WHERE</span> (patient <span class="op">=</span> <span class="kw">ANY</span>($<span class="dv">1</span>) <span class="kw">OR</span> doctor <span class="op">=</span> <span class="kw">ANY</span>($<span class="dv">2</span>))</span>
+<span id="cb2-26"><a href="#cb2-26" aria-hidden="true" tabindex="-1"></a>    <span class="kw">UNION</span></span>
+<span id="cb2-27"><a href="#cb2-27" aria-hidden="true" tabindex="-1"></a>    <span class="kw">SELECT</span> <span class="st">'d2w'</span>, doctor, workstation <span class="kw">FROM</span> doctor_used_workstation <span class="kw">WHERE</span> (doctor <span class="op">=</span> <span class="kw">ANY</span>($<span class="dv">2</span>) <span class="kw">or</span> workstation <span class="op">=</span> <span class="kw">ANY</span>($<span class="dv">3</span>))</span>
+<span id="cb2-28"><a href="#cb2-28" aria-hidden="true" tabindex="-1"></a>  )</span>
+<span id="cb2-29"><a href="#cb2-29" aria-hidden="true" tabindex="-1"></a>  <span class="kw">UNION</span></span>
+<span id="cb2-30"><a href="#cb2-30" aria-hidden="true" tabindex="-1"></a>  <span class="co">-- RECURSIVE TERMS</span></span>
+<span id="cb2-31"><a href="#cb2-31" aria-hidden="true" tabindex="-1"></a>  (</span>
+<span id="cb2-32"><a href="#cb2-32" aria-hidden="true" tabindex="-1"></a>    <span class="kw">WITH</span></span>
+<span id="cb2-33"><a href="#cb2-33" aria-hidden="true" tabindex="-1"></a>      edges <span class="kw">AS</span> (<span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> all_edges), <span class="co">-- https://dba.stackexchange.com/a/240309</span></span>
+<span id="cb2-34"><a href="#cb2-34" aria-hidden="true" tabindex="-1"></a>      edges_p2d <span class="kw">AS</span> (<span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> edges <span class="kw">WHERE</span> tipe <span class="op">=</span> <span class="st">'p2d'</span>),</span>
+<span id="cb2-35"><a href="#cb2-35" aria-hidden="true" tabindex="-1"></a>      edges_d2w <span class="kw">AS</span> (<span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> edges <span class="kw">WHERE</span> tipe <span class="op">=</span> <span class="st">'d2w'</span>),</span>
+<span id="cb2-36"><a href="#cb2-36" aria-hidden="true" tabindex="-1"></a>      active_patients(pat_id) <span class="kw">AS</span> (<span class="kw">SELECT</span> lft <span class="kw">FROM</span> edges_p2d),</span>
+<span id="cb2-37"><a href="#cb2-37" aria-hidden="true" tabindex="-1"></a>      active_doctors(dr_id) <span class="kw">AS</span> (<span class="kw">SELECT</span> rgt <span class="kw">FROM</span> edges_p2d <span class="kw">UNION</span> <span class="kw">SELECT</span> lft <span class="kw">FROM</span> edges_d2w),</span>
+<span id="cb2-38"><a href="#cb2-38" aria-hidden="true" tabindex="-1"></a>      active_workstations(ws_id) <span class="kw">AS</span> (<span class="kw">SELECT</span> rgt <span class="kw">FROM</span> edges_d2w)</span>
+<span id="cb2-39"><a href="#cb2-39" aria-hidden="true" tabindex="-1"></a>    <span class="co">-- PATIENT ADJACENT EDGES</span></span>
+<span id="cb2-40"><a href="#cb2-40" aria-hidden="true" tabindex="-1"></a>    (<span class="kw">SELECT</span> <span class="st">'p2d'</span>, patient, doctor <span class="kw">FROM</span> patient_met_doctor pmd <span class="kw">JOIN</span> active_patients ap <span class="kw">ON</span> pmd.patient <span class="op">=</span> ap.pat_id)</span>
+<span id="cb2-41"><a href="#cb2-41" aria-hidden="true" tabindex="-1"></a>    <span class="kw">UNION</span></span>
+<span id="cb2-42"><a href="#cb2-42" aria-hidden="true" tabindex="-1"></a>    <span class="co">-- WORKSTATION ADJACENT EDGES</span></span>
+<span id="cb2-43"><a href="#cb2-43" aria-hidden="true" tabindex="-1"></a>    (<span class="kw">SELECT</span> <span class="st">'d2w'</span>, doctor, workstation <span class="kw">FROM</span> doctor_used_workstation duw <span class="kw">JOIN</span> active_workstations aw <span class="kw">ON</span> duw.workstation <span class="op">=</span> aw.ws_id)</span>
+<span id="cb2-44"><a href="#cb2-44" aria-hidden="true" tabindex="-1"></a>    <span class="co">-- DOCTOR LEFT-ADJACENT EDGES</span></span>
+<span id="cb2-45"><a href="#cb2-45" aria-hidden="true" tabindex="-1"></a>    <span class="kw">UNION</span></span>
+<span id="cb2-46"><a href="#cb2-46" aria-hidden="true" tabindex="-1"></a>    (<span class="kw">SELECT</span> <span class="st">'p2d'</span>, patient, doctor <span class="kw">FROM</span> patient_met_doctor pmd <span class="kw">JOIN</span> active_doctors ad <span class="kw">ON</span> pmd.doctor <span class="op">=</span> ad.dr_id)</span>
+<span id="cb2-47"><a href="#cb2-47" aria-hidden="true" tabindex="-1"></a>    <span class="co">-- DOCTOR RIGHT-ADJACENT EDGES</span></span>
+<span id="cb2-48"><a href="#cb2-48" aria-hidden="true" tabindex="-1"></a>    <span class="kw">UNION</span></span>
+<span id="cb2-49"><a href="#cb2-49" aria-hidden="true" tabindex="-1"></a>    (<span class="kw">SELECT</span> <span class="st">'d2w'</span>, doctor, workstation <span class="kw">FROM</span> doctor_used_workstation duw <span class="kw">JOIN</span> active_doctors ad <span class="kw">ON</span> duw.doctor <span class="op">=</span> ad.dr_id)</span>
+<span id="cb2-50"><a href="#cb2-50" aria-hidden="true" tabindex="-1"></a>  )</span>
+<span id="cb2-51"><a href="#cb2-51" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb2-52"><a href="#cb2-52" aria-hidden="true" tabindex="-1"></a><span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> all_edges;</span>
+<span id="cb2-53"><a href="#cb2-53" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-54"><a href="#cb2-54" aria-hidden="true" tabindex="-1"></a><span class="co">-- find any entity transitively related to the patient 'Mike'</span></span>
+<span id="cb2-55"><a href="#cb2-55" aria-hidden="true" tabindex="-1"></a><span class="kw">EXECUTE</span> exploreGraph(<span class="st">'{&quot;Mike&quot;}'</span>, <span class="st">'{}'</span>, <span class="st">'{}'</span>);</span></code></pre></div>
+<p>Running this yields:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode txt"><code class="sourceCode default"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>postgres=# \i ./query.sql </span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>CREATE TABLE</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>CREATE TABLE</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>INSERT 0 3</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>INSERT 0 3</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>PREPARE</span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a> tipe |   lft    |    rgt    </span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>------+----------+-----------</span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a> p2d  | Mike     | dr. Dre</span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a> d2w  | dr. Dre  | station_1</span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a> d2w  | dr. John | station_1</span>
+<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a> p2d  | Sarah    | dr. John</span>
+<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a>(4 rows)</span></code></pre></div>
+</details>
+<h4 id="back-to-the-real-world">Back to the real world</h4>
+<p>In our application the identifiers tend to have a disjunct format so we simply show the user a single <code>&lt;textarea&gt;</code>, treat each line as a separate input and we replicate it into each input array (even though the user looses a bit on expressibility I found the simplified UI is well worth the trade off).</p>
+<figure>
+<img src="./ui.jpg" alt="UI" /><figcaption aria-hidden="true">UI</figcaption>
+</figure>
+<p>In the real world things can get weird:</p>
+<figure>
+<img src="biblically-accurate-identifiers.jpg" alt="biblically-accurate-identifiers" /><figcaption aria-hidden="true">biblically-accurate-identifiers</figcaption>
+</figure>
+<h2 id="results">Results</h2>
+<p>Initially our goal was to build a tool for ourselves as we didn’t want to continously have to ask for production cluster access, but soon the users found out about it and the support requests started to regularly look like this:</p>
+<figure>
+<img src="./support-ticket.png" alt="support-request" /><figcaption aria-hidden="true">support-request</figcaption>
+</figure>
+<p>(which obviously made me very happy 😊)</p>
+<p>Screenshots from this UI are now regularly being used in chat threads to communicate even the most basic scenarios.</p>
+<h2 id="did-it-ever-go-wrong">Did it ever go wrong?</h2>
+<p>We obviously forgot to limit the input data and one day we were notified about a query running for 6 hours.</p>
+<p>In short it’s just a matter of time before some Björn discovers your nice little debugging tool and copies a 2k line long Excel file into the input <code>&lt;textarea&gt;</code> (in this case it happened ~2 years after the feature was released).</p>
+
+            <div class="comments">
+                <h2>Comments</h2>
+                <div id="disqus_thread"></div>
+                <script>
+                /**
+                *  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.
+                *  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/
+                var disqus_config = function () {
+                    this.page.url = "http://fghibellini.com";  // Replace PAGE_URL with your page's canonical URL variable
+                    this.page.identifier = "/posts/2022-12-20-Recursive-SQL-Queries-In-Practice/index.html"; // Replace PAGE_IDENTIFIER with your page's unique identifier variable
+                };
+                (function() { // DON'T EDIT BELOW THIS LINE
+                    var d = document, s = d.createElement('script');
+                    s.src = 'https://fghibellini.disqus.com/embed.js';
+                    s.setAttribute('data-timestamp', +new Date());
+                    (d.head || d.body).appendChild(s);
+                })();
+                </script>
+                <noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+            </div>
+
+        </div>
+
+        <!-- SHARED FOOTER ACROSS PAGES -->
+<div class="footer">
+    <div class="generated-by">
+        generated by
+        <a href="http://jaspervdj.be/hakyll">Hakyll</a>
+        <img src="../../images/haskell-logo.png" class="hakyll-img" />
+    </div>
+    <div class="copyright">© 2017 Filippo Ghibellini. All rights reserved.</div>
+    <script>
+          (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+          (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+          m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+          })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+          ga('create', 'UA-105665099-1', 'auto');
+          ga('send', 'pageview');
+    </script>
+</div>
+
+    </body>
+</html>

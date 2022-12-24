@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"
+    xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <channel>
+        <title>Healthy cooking: latest recipes</title>
+        <link>http://healthycooking.example.com</link>
+        <description><![CDATA[This feed provides fresh recipes for fresh food!]]></description>
+        <atom:link href="http://healthycooking.example.com/rss.xml" rel="self"
+                   type="application/rss+xml" />
+        <lastBuildDate>Tue, 20 Dec 2022 00:00:00 UT</lastBuildDate>
+        <item>
+    <title>Recursive SQL Queries In Practice</title>
+    <link>http://healthycooking.example.com/posts/2022-12-20-Recursive-SQL-Queries-In-Practice/index.html</link>
+    <description><![CDATA[<No description>]]></description>
+    <pubDate>Tue, 20 Dec 2022 00:00:00 UT</pubDate>
+    <guid>http://healthycooking.example.com/posts/2022-12-20-Recursive-SQL-Queries-In-Practice/index.html</guid>
+    <dc:creator>John Doe</dc:creator>
+</item>
+<item>
+    <title>Leveraging UUIDs to the Max</title>
+    <link>http://healthycooking.example.com/posts/2022-12-17-Leveraging-UUIDs-to-the-Max/index.html</link>
+    <description><![CDATA[<No description>]]></description>
+    <pubDate>Sat, 17 Dec 2022 00:00:00 UT</pubDate>
+    <guid>http://healthycooking.example.com/posts/2022-12-17-Leveraging-UUIDs-to-the-Max/index.html</guid>
+    <dc:creator>John Doe</dc:creator>
+</item>
+<item>
+    <title>Max area under histogram</title>
+    <link>http://healthycooking.example.com/posts/2015-06-26-Max-area-under-histogram/index.html</link>
+    <description><![CDATA[<No description>]]></description>
+    <pubDate>Fri, 26 Jun 2015 00:00:00 UT</pubDate>
+    <guid>http://healthycooking.example.com/posts/2015-06-26-Max-area-under-histogram/index.html</guid>
+    <dc:creator>John Doe</dc:creator>
+</item>
+
+    </channel>
+</rss>
